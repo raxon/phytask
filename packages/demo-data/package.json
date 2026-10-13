@@ -1,0 +1,17 @@
+{
+  "name": "@rep-counter/demo-data",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    "./patients": "./src/patients.ts",
+    "./fixtures": "./src/fixtures.ts",
+    "./fixtures/*": "./fixtures/*"
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit -p tsconfig.json"
+  },
+  "dependencies": {
+    "@rep-counter/contracts": "*"
+  }
+}

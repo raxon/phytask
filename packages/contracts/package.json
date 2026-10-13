@@ -1,0 +1,14 @@
+{
+  "name": "@rep-counter/contracts",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    "./session": "./src/session.ts",
+    "./fixture": "./src/fixture.ts",
+    "./errors": "./src/errors.ts"
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit -p tsconfig.json"
+  }
+}

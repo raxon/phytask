@@ -1,0 +1,23 @@
+{
+  "name": "@rep-counter/api",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "tsx watch src/main.ts",
+    "build": "node build.mjs",
+    "typecheck": "tsc --noEmit -p tsconfig.json",
+    "test": "vitest run --root ../.. apps/api/tests",
+    "lint": "eslint src tests"
+  },
+  "dependencies": {
+    "express": "^5.1.0",
+    "@rep-counter/contracts": "*",
+    "@rep-counter/demo-data": "*"
+  },
+  "devDependencies": {
+    "@types/node": "^22.18.0",
+    "@types/express": "^5.0.3",
+    "@types/supertest": "^6.0.3"
+  }
+}

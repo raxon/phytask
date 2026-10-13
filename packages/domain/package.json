@@ -1,0 +1,17 @@
+{
+  "name": "@rep-counter/domain",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    "./repetitions": "./src/repetitions.ts"
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit -p tsconfig.json",
+    "test": "vitest run --root ../.. packages/domain/tests"
+  },
+  "devDependencies": {
+    "@rep-counter/contracts": "*",
+    "@rep-counter/demo-data": "*"
+  }
+}
