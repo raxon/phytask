@@ -7,6 +7,45 @@ const fixturePath = resolve('packages/demo-data/fixtures/session-noisy.json');
 const shortFixture: Fixture = { sampleRateHz: 30, angles: [172, 99, 160, 161], expectedReps: 1 };
 const twoRepFixture: Fixture = { sampleRateHz: 30, angles: [99, 161, 99, 161], expectedReps: 2 };
 
+test('syncs the squat illustration with received angles and keeps the final pose', async ({
+  page,
+}) => {
+  const fixture: Fixture = {
+    sampleRateHz: 30,
+    angles: [...Array<number>(30).fill(180), ...Array<number>(600).fill(90), 180],
+  };
+  const drawnKneeAngle = async () => {
+    const path = (await page.getByTestId('squat-front-leg').getAttribute('d'))!;
+    const [hx, hy, kx, ky, ax, ay] = path.match(/-?\d+(?:\.\d+)?/g)!.map(Number);
+    const thigh = { x: hx! - kx!, y: hy! - ky! };
+    const shin = { x: ax! - kx!, y: ay! - ky! };
+    const cosine =
+      (thigh.x * shin.x + thigh.y * shin.y) /
+      (Math.hypot(thigh.x, thigh.y) * Math.hypot(shin.x, shin.y));
+    return (Math.acos(Math.max(-1, Math.min(1, cosine))) * 180) / Math.PI;
+  };
+  await page.goto('/');
+  await importFixture(page, fixture);
+  await page.getByRole('button', { name: 'Start session', exact: true }).click();
+  await expect(page.getByTestId('live-angle')).toHaveText('180.0°');
+  expect(await drawnKneeAngle()).toBeCloseTo(180, 0);
+  const standingLeg = await page.getByTestId('squat-front-leg').getAttribute('d');
+  await expect(page.getByTestId('live-angle')).toHaveText('90.0°');
+  await expect(page.getByTestId('squat-illustration')).toHaveAttribute('data-knee-angle', '90.0');
+  expect(await drawnKneeAngle()).toBeCloseTo(90, 0);
+  expect(await page.getByTestId('squat-front-leg').getAttribute('d')).not.toBe(standingLeg);
+  await expect(page.getByTestId('live-signal-marker')).toBeVisible();
+  const crouchedLeg = await page.getByTestId('squat-front-leg').getAttribute('d');
+  await page.getByRole('button', { name: 'Finish session', exact: true }).click();
+  await expectSaved(page);
+  await expect(page.getByTestId('rep-count')).toHaveText('0reps');
+  await expect(page.getByTestId('squat-illustration')).toHaveAttribute('data-knee-angle', '90.0');
+  expect(await page.getByTestId('squat-front-leg').getAttribute('d')).toBe(crouchedLeg);
+  await page.getByRole('button', { name: /Noisy signal/ }).click();
+  await expect(page.getByTestId('live-angle')).toHaveText('-');
+  await expect(page.getByTestId('squat-illustration')).toHaveAttribute('data-knee-angle', '180.0');
+});
+
 test('resumes a disconnected demo stream without losing a bent-to-standing transition', async ({
   page,
 }) => {

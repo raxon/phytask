@@ -22,6 +22,7 @@ export function SessionResultPanel({ view, patient, onSave }: Props) {
     isCompleted,
     sampleCount,
     totalSamples,
+    currentAngle,
     saveError,
   } = view;
   const status = isSaving
@@ -74,7 +75,7 @@ export function SessionResultPanel({ view, patient, onSave }: Props) {
               : 'Choose a signal to begin a session.'}
           </p>
         </div>
-        <SquatIllustration />
+        <SquatIllustration kneeAngle={currentAngle} />
       </div>
       <div className="result-metrics">
         <div>
