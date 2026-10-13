@@ -7,6 +7,8 @@ type IconName =
   | 'refresh'
   | 'clock'
   | 'shield'
+  | 'play'
+  | 'stop'
   | 'spark'
   | 'chevron';
 const paths: Record<IconName, string> = {
@@ -18,6 +20,8 @@ const paths: Record<IconName, string> = {
   refresh: 'M20 7v5h-5M4 17v-5h5M6 6a8 8 0 0 1 13 2M5 16a8 8 0 0 0 13 2',
   clock: 'M12 8v5l3 2M22 12a10 10 0 1 1-20 0 10 10 0 0 1 20 0',
   shield: 'm12 2 8 4v6c0 5-8 10-8 10S4 17 4 12V6l8-4Zm-4 10 3 3 5-6',
+  play: 'm8 4 12 8-12 8V4Z',
+  stop: 'M6 6h12v12H6V6Z',
   spark: 'm12 3 2.5 6.5L21 12l-6.5 2.5L12 21l-2.5-6.5L3 12l6.5-2.5L12 3Z',
   chevron: 'm8 5 7 7-7 7',
 };

@@ -6,6 +6,7 @@ import { createWorkspaceCommands } from '../../src/features/workspace/applicatio
 import type {
   PendingResultsStorage,
   SessionWriter,
+  SignalStream,
 } from '../../src/features/workspace/application/ports';
 import { createAnalysisFactory } from '../../src/features/workspace/model/analysis';
 import { examples } from '../../src/features/workspace/model/examples';
@@ -27,6 +28,25 @@ class MemoryPendingResultsStorage implements PendingResultsStorage {
   }
   async remove(patientId: PatientId, sessionId: string) {
     if (this.pending[patientId]?.sessionId === sessionId) delete this.pending[patientId];
+  }
+}
+
+class ManualSignalStream implements SignalStream {
+  subscriptions: Parameters<SignalStream['subscribe']>[0][] = [];
+  stop = vi.fn();
+  subscribe(options: Parameters<SignalStream['subscribe']>[0]) {
+    this.subscriptions.push(options);
+    return this.stop;
+  }
+  get latest() {
+    return this.subscriptions.at(-1)!;
+  }
+  feedAll() {
+    const current = this.latest;
+    current.source.fixture.angles.slice(current.fromIndex).forEach((angle, offset) => {
+      current.onSample({ index: current.fromIndex + offset, angle });
+    });
+    current.onComplete();
   }
 }
 
@@ -60,6 +80,7 @@ function harness(
   pendingResults: PendingResultsStorage = new MemoryPendingResultsStorage(),
 ) {
   let sequence = 0;
+  const signals = new ManualSignalStream();
   const store = createAppStore(createWorkspaceState('alex', pendingResults.load()));
   const commands = createWorkspaceCommands({
     state: {
@@ -70,90 +91,200 @@ function harness(
     },
     pendingResults,
     sessions,
+    signals,
     analyze: createAnalysisFactory({
-      generateId: () => `session-${++sequence}`,
+      generateId: () => 'session-' + ++sequence,
       performedAt: () => '2026-10-13T10:00:00.000Z',
     }),
-    generateOperationId: () => `operation-${++sequence}`,
+    generateOperationId: () => 'operation-' + ++sequence,
   });
-  return { store, commands, state: () => store.getState().workspace };
+  const state = () => store.getState().workspace;
+  const settled = () => vi.waitFor(() => expect(state().saving).toEqual({}));
+  async function run(example = examples[0]!) {
+    commands.chooseExample(example);
+    commands.startSession();
+    signals.feedAll();
+    await settled();
+  }
+  return { store, commands, state, signals, run, settled };
 }
 
-describe('workspace operations with replaceable adapters', () => {
-  it('preserves pending results owned by another open tab', async () => {
-    const { adapter: persistence } = durableQueue();
-    const sessions = {
-      save: async () => {
-        throw new Error('Lost response');
-      },
-    };
-    const first = harness(sessions, persistence);
-    const second = harness(sessions, persistence);
-    first.commands.chooseExample(examples[0]!);
-    second.store.dispatch(actions.selectPatient('jamie'));
-    second.commands.chooseExample(examples[1]!);
-    await first.commands.saveResult();
-    await second.commands.saveResult();
-    expect(persistence.load()).toEqual({
-      alex: first.state().pending.alex,
-      jamie: second.state().pending.jamie,
-    });
-    const restored = harness({ save: async () => {} }, persistence);
-    await restored.commands.saveResult();
-    expect(persistence.load()).toEqual({ jamie: second.state().pending.jamie });
+const result: SessionResult = {
+  sessionId: 'stored-result',
+  reps: 10,
+  durationSec: 36.2,
+  performedAt: '2026-10-13T10:00:00.000Z',
+};
+
+describe('live workspace operations', () => {
+  it('selects a source without precounting and sends nothing until Finish', async () => {
+    const save = vi.fn<SessionWriter['save']>().mockResolvedValue(undefined);
+    const app = harness({ save });
+    app.commands.chooseExample(examples[0]!);
+    expect(app.state().analysis).toBeNull();
+    await app.commands.saveResult();
+    expect(save).not.toHaveBeenCalled();
+    app.commands.startSession();
+    const identity = { ...app.state().analysis!.result };
+    app.signals.latest.onSample({ index: 0, angle: 99 });
+    app.signals.latest.onSample({ index: 1, angle: 160 });
+    expect(app.state().analysis!.result.reps).toBe(0);
+    app.signals.latest.onSample({ index: 2, angle: 181.6 });
+    expect(app.state().analysis!.result.reps).toBe(1);
+    expect(app.state().analysis!.result.durationSec).toBe(3 / 30);
+    await app.commands.saveResult();
+    expect(save).not.toHaveBeenCalled();
+    app.store.dispatch(actions.selectPatient('jamie'));
+    expect(app.state().patientId).toBe('alex');
+    await app.commands.finishSession();
+    expect(save).toHaveBeenCalledOnce();
+    expect(save).toHaveBeenCalledWith('alex', { ...identity, reps: 1, durationSec: 3 / 30 });
+    expect(Object.keys(save.mock.calls[0]![1]).sort()).toEqual([
+      'durationSec',
+      'performedAt',
+      'reps',
+      'sessionId',
+    ]);
   });
 
-  it("does not overwrite another tab's unconfirmed result for the same patient", async () => {
-    const { adapter: persistence } = durableQueue();
-    const save = vi.fn<SessionWriter['save']>().mockRejectedValue(new Error('Lost response'));
-    const first = harness({ save }, persistence);
-    const second = harness({ save }, persistence);
-    first.commands.chooseExample(examples[0]!);
-    second.commands.chooseExample(examples[1]!);
-    await first.commands.saveResult();
-    await second.commands.saveResult();
-    expect(save).toHaveBeenCalledTimes(1);
-    expect(persistence.load()).toEqual({ alex: first.state().pending.alex });
-    expect(second.state().errors.alex).toContain('Another tab');
+  it.each(examples)(
+    'counts and automatically saves $title only when its stream completes',
+    async (example) => {
+      const save = vi.fn<SessionWriter['save']>().mockResolvedValue(undefined);
+      const app = harness({ save });
+      await app.run(example);
+      expect(save).toHaveBeenCalledOnce();
+      expect(app.state().analysis!.result.reps).toBe(example.fixture.expectedReps);
+      expect(app.state().analysis!.result.durationSec).toBe(
+        example.fixture.angles.length / example.fixture.sampleRateHz,
+      );
+      expect(app.state().streamStatus).toBe('completed');
+      expect(app.signals.stop).toHaveBeenCalledOnce();
+    },
+  );
+
+  it('resumes after a disconnect with the same ID, counter and next index', async () => {
+    const save = vi.fn<SessionWriter['save']>().mockResolvedValue(undefined);
+    const app = harness({ save });
+    app.commands.chooseExample(examples[0]!);
+    app.commands.startSession();
+    const original = app.signals.latest;
+    const identity = { ...app.state().analysis!.result };
+    original.onSample({ index: 0, angle: 90 });
+    original.onSample({ index: 1, angle: 100 });
+    original.onError('Connection lost');
+    expect(app.state().streamStatus).toBe('interrupted');
+    expect(save).not.toHaveBeenCalled();
+    app.commands.resumeSession();
+    expect(app.signals.latest.fromIndex).toBe(2);
+    original.onSample({ index: 2, angle: 170 });
+    expect(app.state().analysis!.fixture.angles).toHaveLength(2);
+    app.signals.latest.onSample({ index: 2, angle: 161 });
+    await app.commands.finishSession();
+    expect(save).toHaveBeenCalledWith('alex', { ...identity, reps: 1, durationSec: 3 / 30 });
   });
 
-  it('persists before sending and retries the same result after restoring state', async () => {
+  it('does not save a truncated or invalid stream until explicitly finished', async () => {
+    const save = vi.fn<SessionWriter['save']>().mockResolvedValue(undefined);
+    const app = harness({ save });
+    app.commands.chooseExample(examples[0]!);
+    app.commands.startSession();
+    app.signals.latest.onSample({ index: 0, angle: 90 });
+    app.signals.latest.onComplete();
+    expect(app.state().streamStatus).toBe('interrupted');
+    expect(save).not.toHaveBeenCalled();
+    app.commands.resumeSession();
+    app.signals.latest.onSample({ index: 3, angle: 170 });
+    expect(app.state().streamStatus).toBe('interrupted');
+    expect(app.state().analysis!.fixture.angles).toEqual([90]);
+    await app.commands.finishSession();
+    expect(save.mock.calls[0]![1].reps).toBe(0);
+  });
+
+  it('ignores old sample callbacks after Finish and after starting another session', async () => {
+    const app = harness({ save: async () => {} });
+    app.commands.chooseExample(examples[0]!);
+    app.commands.startSession();
+    const old = app.signals.latest;
+    const id = app.state().analysis!.result.sessionId;
+    old.onSample({ index: 0, angle: 90 });
+    await app.commands.finishSession();
+    old.onSample({ index: 1, angle: 170 });
+    expect(app.state().analysis!.result.reps).toBe(0);
+    app.commands.startSession();
+    expect(app.state().analysis!.result.sessionId).not.toBe(id);
+    old.onSample({ index: 0, angle: 90 });
+    expect(app.state().analysis!.fixture.angles).toEqual([]);
+  });
+
+  it('persists before the automatic POST and retries the exact result after reload', async () => {
     const persistence = new MemoryPendingResultsStorage();
     const save = vi
       .fn<SessionWriter['save']>()
       .mockRejectedValueOnce(new Error('Lost response'))
       .mockResolvedValue(undefined);
     const first = harness({ save }, persistence);
-    first.commands.chooseExample(examples[0]!);
-    const result = first.state().analysis!.result;
-    await first.commands.saveResult();
-    expect(persistence.pending.alex).toEqual(result);
-    expect(first.state().errors.alex).toContain('server did not confirm');
+    await first.run();
+    const frozen = first.state().pending.alex!;
+    expect(persistence.pending.alex).toEqual(frozen);
     const restored = harness({ save }, persistence);
     await restored.commands.saveResult();
-    expect(save).toHaveBeenNthCalledWith(1, 'alex', result);
-    expect(save).toHaveBeenNthCalledWith(2, 'alex', result);
+    expect(save).toHaveBeenNthCalledWith(1, 'alex', frozen);
+    expect(save).toHaveBeenNthCalledWith(2, 'alex', frozen);
     expect(persistence.pending).toEqual({});
-    expect(restored.state().saved.alex).toBe(result.sessionId);
   });
 
-  it('does not send a result when durable retry storage is unavailable', async () => {
-    const save = vi.fn<SessionWriter['save']>();
-    const persistence: PendingResultsStorage = {
-      load: () => ({}),
+  it('preserves retry results owned by another tab and removes only its confirmed owner', async () => {
+    const { adapter } = durableQueue();
+    const sessions = {
       save: async () => {
-        throw new Error('Storage blocked');
+        throw new Error('Lost response');
       },
-      remove: async () => {},
     };
-    const app = harness({ save }, persistence);
-    app.commands.chooseExample(examples[0]!);
-    await app.commands.saveResult();
+    const first = harness(sessions, adapter);
+    const second = harness(sessions, adapter);
+    second.store.dispatch(actions.selectPatient('jamie'));
+    await first.run();
+    await second.run(examples[1]!);
+    expect(adapter.load()).toEqual({
+      alex: first.state().pending.alex,
+      jamie: second.state().pending.jamie,
+    });
+    const restored = harness({ save: async () => {} }, adapter);
+    await restored.commands.saveResult();
+    expect(adapter.load()).toEqual({ jamie: second.state().pending.jamie });
+  });
+
+  it("does not overwrite another tab's unconfirmed result for the same patient", async () => {
+    const { adapter } = durableQueue();
+    const save = vi.fn<SessionWriter['save']>().mockRejectedValue(new Error('Lost response'));
+    const first = harness({ save }, adapter);
+    const second = harness({ save }, adapter);
+    await first.run();
+    await second.run(examples[1]!);
+    expect(save).toHaveBeenCalledOnce();
+    expect(adapter.load()).toEqual({ alex: first.state().pending.alex });
+    expect(second.state().errors.alex).toContain('Another tab');
+  });
+
+  it('does not POST when durable retry storage is unavailable', async () => {
+    const save = vi.fn<SessionWriter['save']>();
+    const app = harness(
+      { save },
+      {
+        load: () => ({}),
+        save: async () => {
+          throw new Error('Storage blocked');
+        },
+        remove: async () => {},
+      },
+    );
+    await app.run();
     expect(save).not.toHaveBeenCalled();
     expect(app.state().errors.alex).toContain('retry copy');
   });
 
-  it('keeps an in-flight save attached to its original patient', async () => {
+  it('keeps an automatic save attached to its owner after changing patient', async () => {
     let release!: () => void;
     const save = vi.fn(
       () =>
@@ -163,20 +294,24 @@ describe('workspace operations with replaceable adapters', () => {
     );
     const app = harness({ save });
     app.commands.chooseExample(examples[0]!);
+    app.commands.startSession();
+    app.signals.feedAll();
     const original = app.state().analysis!.result;
-    const pendingSave = app.commands.saveResult();
     app.store.dispatch(actions.selectPatient('jamie'));
     app.commands.chooseExample(examples[2]!);
+    app.commands.startSession();
+    app.signals.latest.onSample({ index: 0, angle: 90 });
+    app.signals.latest.onSample({ index: 1, angle: 170 });
     await vi.waitFor(() => expect(save).toHaveBeenCalledOnce());
     release();
-    await pendingSave;
+    await app.settled();
     expect(app.state().analysis?.patientId).toBe('jamie');
-    expect(app.state().analysis?.result.reps).toBe(7);
+    expect(app.state().analysis?.result.reps).toBe(1);
     expect(app.state().saved.alex).toBe(original.sessionId);
     expect(app.state().confirmation).toBeNull();
   });
 
-  it('does not submit a second write while the first is in flight', async () => {
+  it('does not POST again when Finish or retry is clicked while saving', async () => {
     let release!: () => void;
     const save = vi.fn(
       () =>
@@ -186,15 +321,16 @@ describe('workspace operations with replaceable adapters', () => {
     );
     const app = harness({ save });
     app.commands.chooseExample(examples[0]!);
-    const first = app.commands.saveResult();
+    app.commands.startSession();
+    app.signals.feedAll();
+    await app.commands.finishSession();
     await app.commands.saveResult();
     await vi.waitFor(() => expect(save).toHaveBeenCalledOnce());
-    expect(save).toHaveBeenCalledTimes(1);
     release();
-    await first;
+    await app.settled();
   });
 
-  it('ignores a late imported file after switching the selected patient', async () => {
+  it('ignores an imported file that finishes after changing patients', async () => {
     let release!: (text: string) => void;
     const text = new Promise<string>((resolve) => {
       release = resolve;
@@ -205,17 +341,14 @@ describe('workspace operations with replaceable adapters', () => {
     app.commands.chooseExample(examples[1]!);
     release(JSON.stringify(examples[0]!.fixture));
     await importing;
-    expect(app.state().analysis?.patientId).toBe('jamie');
-    expect(app.state().analysis?.result.reps).toBe(8);
+    expect(app.state().source?.fixture.expectedReps).toBe(8);
+    expect(app.state().analysis).toBeNull();
   });
 });
 
 describe('pending storage adapter', () => {
-  it('preserves the existing storage schema and stores only result fields', async () => {
+  it('preserves the existing schema and stores only result fields', async () => {
     const { adapter, values } = durableQueue();
-    const app = harness({ save: async () => {} });
-    app.commands.chooseExample(examples[0]!);
-    const result = app.state().analysis!.result;
     await adapter.save('alex', result);
     expect(adapter.load()).toEqual({ alex: result });
     const raw = values.get(pendingStorageKey)!;
@@ -223,12 +356,8 @@ describe('pending storage adapter', () => {
     expect(raw).not.toContain('angles');
     expect(raw).not.toContain('token');
   });
-
-  it('removes only the confirmed session and leaves a newer retry copy intact', async () => {
+  it('removes only the confirmed session and keeps a newer retry copy', async () => {
     const { adapter } = durableQueue();
-    const app = harness({ save: async () => {} });
-    app.commands.chooseExample(examples[0]!);
-    const result = app.state().analysis!.result;
     expect(await adapter.save('alex', result)).toBe(true);
     expect(await adapter.save('alex', result)).toBe(true);
     await adapter.remove('alex', 'another-session');
@@ -236,8 +365,7 @@ describe('pending storage adapter', () => {
     await adapter.remove('alex', result.sessionId);
     expect(adapter.load()).toEqual({});
   });
-
-  it('treats a corrupt or unavailable local storage as an empty queue', () => {
+  it('treats corrupt or unavailable storage as an empty queue', () => {
     expect(
       createPendingResultsStorage(
         () => ({ getItem: () => '{broken', setItem: () => {} }),

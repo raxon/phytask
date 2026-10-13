@@ -9,34 +9,45 @@ function subscribeToViewport(onChange: () => void) {
 }
 const smallViewport = () => window.matchMedia('(max-width: 680px)').matches;
 
-export function SignalChart({ fixture }: { fixture: Fixture }) {
+interface Props {
+  fixture: Fixture;
+  totalSamples: number;
+  sourceAngles: readonly number[];
+  live: boolean;
+}
+
+export function SignalChart({ fixture, totalSamples, sourceAngles, live }: Props) {
   const compact = useSyncExternalStore(subscribeToViewport, smallViewport, () => false);
   const width = compact ? 400 : 940;
   const right = width - 24;
   const plotWidth = right - 48;
-  const chart = useMemo(() => {
+  const range = useMemo(() => {
     const min = Math.min(
       60,
-      fixture.angles.reduce((a, b) => Math.min(a, b), 60),
+      sourceAngles.reduce((a, b) => Math.min(a, b), 60),
     );
     const max = Math.max(
       190,
-      fixture.angles.reduce((a, b) => Math.max(a, b), 190),
+      sourceAngles.reduce((a, b) => Math.max(a, b), 190),
     );
-    const x = (i: number) => 48 + (i / Math.max(1, fixture.angles.length - 1)) * plotWidth;
-    const y = (angle: number) => 20 + ((max - angle) / (max - min || 1)) * 192;
+    return { min, max };
+  }, [sourceAngles]);
+  const chart = useMemo(() => {
+    // Keep the full session timeline fixed while incoming samples extend the trace.
+    const x = (i: number) => 48 + (i / Math.max(1, totalSamples - 1)) * plotWidth;
+    const y = (angle: number) => 20 + ((range.max - angle) / (range.max - range.min || 1)) * 192;
     const completions = Array.from(completedRepIndices(fixture.angles));
     const points = fixture.angles
       .map((angle, i) => `${x(i).toFixed(2)},${y(angle).toFixed(2)}`)
       .join(' ');
     return { x, y, points, completions };
-  }, [fixture, plotWidth]);
-  const duration = fixture.angles.length / fixture.sampleRateHz;
+  }, [fixture, plotWidth, range, totalSamples]);
+  const duration = totalSamples / fixture.sampleRateHz;
   return (
     <svg
       viewBox={`0 0 ${width} 252`}
       role="img"
-      aria-label={`Knee angle over ${duration.toFixed(1)} seconds. Dashed lines show 100 and 160 degree thresholds.`}
+      aria-label={`Knee angle over ${duration.toFixed(1)} seconds. ${fixture.angles.length} of ${totalSamples} samples received. Dashed lines show 100 and 160 degree thresholds.`}
       className="signal-chart"
     >
       <defs>
@@ -93,6 +104,17 @@ export function SignalChart({ fixture }: { fixture: Fixture }) {
           strokeWidth="2"
         />
       ))}
+      {live && fixture.angles.length > 0 && (
+        <circle
+          cx={chart.x(fixture.angles.length - 1)}
+          cy={chart.y(fixture.angles.at(-1)!)}
+          r="4"
+          fill="#07877f"
+          stroke="white"
+          strokeWidth="2"
+          data-testid="live-signal-marker"
+        />
+      )}
       {(compact ? [0, 2, 4] : [0, 1, 2, 3, 4]).map((i) => (
         <text
           key={i}

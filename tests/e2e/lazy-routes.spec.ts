@@ -61,12 +61,12 @@ for (const route of routes) {
     }
 
     await expect(page.getByText(`Loading ${route.page}...`, { exact: true })).toHaveCount(0);
-    if (route.path === '/') await expect(page.getByTestId('rep-count')).toHaveText('10reps');
+    if (route.path === '/') await expect(page.getByTestId('rep-count')).toHaveText('0reps');
     else await expect(page.getByRole('heading', { name: /^Saved sessions/ })).toBeVisible();
 
     await page.getByRole('link', { name: route.otherName, exact: true }).click();
     if (route.otherName === 'Workspace')
-      await expect(page.getByTestId('rep-count')).toHaveText('10reps');
+      await expect(page.getByTestId('rep-count')).toHaveText('0reps');
     else await expect(page.getByRole('heading', { name: /^Saved sessions/ })).toBeVisible();
     expect(requests).toContain(`/${other.file}`);
 

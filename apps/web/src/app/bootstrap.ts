@@ -9,8 +9,9 @@ import {
   pendingStorageKey,
 } from '../features/workspace/infrastructure/pending-results-storage';
 import { createRtkSessionWriter } from '../features/workspace/infrastructure/rtk-session-writer';
+import { createBrowserSignalStream } from '../features/workspace/infrastructure/browser-signal-stream';
 
-// Browser globals and concrete adapters are wired only at this composition root.
+// Concrete browser adapters are wired at this composition root.
 const pendingResults = createPendingResultsStorage(
   () => window.localStorage,
   Object.keys(patients) as PatientId[],
@@ -22,9 +23,15 @@ const analyze = createAnalysisFactory({
 });
 const pending = pendingResults.load();
 const first = examples[0]!;
-const initialAnalysis = pending.alex ? null : analyze('alex', first.fileName, first.fixture);
+const initialSource = pending.alex
+  ? null
+  : {
+      name: first.fileName,
+      fixture: first.fixture,
+      fixtureId: first.id,
+    };
 
-export const store = createAppStore(createWorkspaceState('alex', pending, initialAnalysis));
+export const store = createAppStore(createWorkspaceState('alex', pending, initialSource));
 export const workspaceCommands = createWorkspaceCommands({
   state: {
     get: () => store.getState().workspace,
@@ -34,6 +41,14 @@ export const workspaceCommands = createWorkspaceCommands({
   },
   pendingResults,
   sessions: createRtkSessionWriter(store.dispatch),
+  signals: createBrowserSignalStream({
+    request: (url, options) => fetch(url, options),
+    tokenFor: (patientId) => patients[patientId].token,
+    schedule: (callback, intervalMs) => {
+      const timer = window.setInterval(callback, intervalMs);
+      return () => window.clearInterval(timer);
+    },
+  }),
   analyze,
   generateOperationId: () => crypto.randomUUID(),
 });

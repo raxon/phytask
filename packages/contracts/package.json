@@ -4,6 +4,7 @@
   "private": true,
   "type": "module",
   "exports": {
+    "./signal": "./src/signal.ts",
     "./session": "./src/session.ts",
     "./fixture": "./src/fixture.ts",
     "./errors": "./src/errors.ts"

@@ -13,6 +13,10 @@ export function WorkspacePage() {
           view={view}
           onChoose={commands.chooseExample}
           onImport={commands.importFile}
+          onStart={commands.startSession}
+          onFinish={commands.finishSession}
+          onResume={commands.resumeSession}
+          onPlaybackSpeed={commands.setPlaybackSpeed}
         />
         <SessionResultPanel
           view={view}
@@ -20,7 +24,7 @@ export function WorkspacePage() {
           onSave={commands.saveResult}
         />
       </div>
-      <SessionSignalPanel analysis={view.analysis} />
+      <SessionSignalPanel view={view} />
     </>
   );
 }

@@ -1,8 +1,9 @@
 import { Icon } from '../../../shared/ui/Icon';
 import { SignalChart } from './SignalChart';
-import type { Analysis } from '../model/types';
+import type { WorkspaceView } from '../model/selectors';
 
-export function SessionSignalPanel({ analysis }: { analysis: Analysis | null }) {
+export function SessionSignalPanel({ view }: { view: WorkspaceView }) {
+  const { analysis, source, isRunning, totalSamples } = view;
   return (
     <section className="panel chart-panel" aria-labelledby="chart-title">
       <div className="chart-header">
@@ -25,9 +26,14 @@ export function SessionSignalPanel({ analysis }: { analysis: Analysis | null }) 
           </span>
         </div>
       </div>
-      {analysis ? (
+      {analysis && analysis.fixture.angles.length > 0 ? (
         <>
-          <SignalChart fixture={analysis.fixture} />
+          <SignalChart
+            fixture={analysis.fixture}
+            totalSamples={totalSamples}
+            sourceAngles={source?.fixture.angles ?? analysis.fixture.angles}
+            live={isRunning}
+          />
           <div className="chart-footer">
             <span>
               <Icon name="file" />
@@ -39,7 +45,13 @@ export function SessionSignalPanel({ analysis }: { analysis: Analysis | null }) 
       ) : (
         <div className="chart-empty">
           <Icon name="pulse" />
-          <p>Choose a session to explore its movement.</p>
+          <p>
+            {isRunning
+              ? 'Waiting for the first sample...'
+              : source
+                ? 'Start a session to see its live signal.'
+                : 'Choose a signal to begin.'}
+          </p>
         </div>
       )}
     </section>

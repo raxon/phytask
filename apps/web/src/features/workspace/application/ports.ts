@@ -1,7 +1,8 @@
 import type { SessionResult } from '@rep-counter/contracts/session';
 import type { PatientId } from '@rep-counter/demo-data/patients';
+import type { PlaybackSpeed, SignalSample } from '@rep-counter/contracts/signal';
 import type { AnalysisFactory } from '../model/analysis';
-import type { PendingResults, WorkspaceState } from '../model/types';
+import type { PendingResults, SimulationSource, WorkspaceState } from '../model/types';
 import type { WorkspaceAction } from '../model/workspace-slice';
 
 export interface PendingResultsStorage {
@@ -13,6 +14,18 @@ export interface PendingResultsStorage {
 
 export interface SessionWriter {
   save(patientId: PatientId, result: SessionResult): Promise<void>;
+}
+
+export interface SignalStream {
+  subscribe(options: {
+    patientId: PatientId;
+    source: SimulationSource;
+    speed: PlaybackSpeed;
+    fromIndex: number;
+    onSample(sample: SignalSample): void;
+    onComplete(): void;
+    onError(message: string): void;
+  }): () => void;
 }
 
 export interface WorkspaceStateAccess {
@@ -29,6 +42,7 @@ export interface WorkspaceDependencies {
   state: WorkspaceStateAccess;
   pendingResults: PendingResultsStorage;
   sessions: SessionWriter;
+  signals: SignalStream;
   analyze: AnalysisFactory;
   generateOperationId(): string;
 }
