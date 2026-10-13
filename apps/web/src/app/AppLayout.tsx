@@ -1,10 +1,12 @@
-import { useEffect } from 'react';
-import { Outlet, useMatch } from 'react-router';
+import { Suspense, useEffect } from 'react';
+import { Outlet, useLocation, useMatch } from 'react-router';
 import { AppHeader } from './AppHeader';
+import { PageLoading } from './PageLoading';
 import { PatientPicker } from '../features/patients/components/PatientPicker';
 
 export function AppLayout() {
   const isHistory = Boolean(useMatch('/history'));
+  const { pathname } = useLocation();
 
   useEffect(() => {
     document.title = isHistory
@@ -32,7 +34,12 @@ export function AppLayout() {
           </div>
           <PatientPicker />
         </div>
-        <Outlet />
+        <Suspense
+          key={pathname}
+          fallback={<PageLoading page={isHistory ? 'session history' : 'workspace'} />}
+        >
+          <Outlet />
+        </Suspense>
       </main>
     </>
   );

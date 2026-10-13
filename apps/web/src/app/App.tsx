@@ -1,7 +1,18 @@
+import { lazy } from 'react';
 import { Route, Routes } from 'react-router';
 import { AppLayout } from './AppLayout';
-import { WorkspacePage } from '../features/workspace/pages/WorkspacePage';
-import { HistoryPage } from '../features/sessions/pages/HistoryPage';
+
+// Keep route modules outside the initial bundle and preserve their identity across renders.
+const WorkspacePage = lazy(() =>
+  import('../features/workspace/pages/WorkspacePage').then((module) => ({
+    default: module.WorkspacePage,
+  })),
+);
+const HistoryPage = lazy(() =>
+  import('../features/sessions/pages/HistoryPage').then((module) => ({
+    default: module.HistoryPage,
+  })),
+);
 
 export function App() {
   return (
